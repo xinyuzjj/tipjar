@@ -128,6 +128,23 @@ async function rpc(env, method, params) {
   if (j.error) throw new Error(`${method}: ${j.error.message}`);
   return j.result;
 }
+
+/** 带退避重试的 RPC：Arc 的公共 RPC 会限流，尤其从 Cloudflare 网络出口 */
+async function rpcRetry(env, method, params, attempts = 4) {
+  let lastErr;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await rpc(env, method, params);
+    } catch (e) {
+      lastErr = e;
+      const msg = String(e.message || e);
+      const throttled = /rate limit|too many|429|timeout/i.test(msg);
+      if (!throttled || i === attempts - 1) throw e;
+      await new Promise((r) => setTimeout(r, 800 * (i + 1)));  // 0.8s, 1.6s, 2.4s
+    }
+  }
+  throw lastErr;
+}
 const hexBlock = (n) => '0x' + Number(n).toString(16);
 
 // ---------- 索引 ----------
@@ -142,8 +159,8 @@ export async function indexOnce(env, { force = false } = {}) {
   const legacy = (env.LEGACY_CONTRACT || '').toLowerCase();
   const addresses = legacy && legacy !== contract ? [contract, legacy] : contract;
 
-  const latest = Number(hexToBigInt(await rpc(env, 'eth_blockNumber', [])));
-  const lookback = Number(env.LOOKBACK_BLOCKS || 2000);
+  const latest = Number(hexToBigInt(await rpcRetry(env, 'eth_blockNumber', [])));
+  const lookback = Number(env.LOOKBACK_BLOCKS || 20000);
 
   const cursor = force ? null : await env.TIPS.get('cursor', 'json');
   const from = cursor ? cursor + 1 : latest - lookback;
@@ -155,8 +172,8 @@ export async function indexOnce(env, { force = false } = {}) {
   let seg = 0;
   for (let f = from; f <= latest; f += CHUNK) {
     const t = Math.min(f + CHUNK - 1, latest);
-    if (seg++ > 0) await new Promise((r) => setTimeout(r, 250)); // 避开 rate limit
-    const part = await rpc(env, 'eth_getLogs', [
+    if (seg++ > 0) await new Promise((r) => setTimeout(r, 500)); // 避开 rate limit
+    const part = await rpcRetry(env, 'eth_getLogs', [
       {
         address: addresses,
         topics: [[TOPICS.Post, TOPICS.Tipped, TOPICS.IdentityBound, TOPICS.UsernameSet]],

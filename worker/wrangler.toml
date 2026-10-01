@@ -5,7 +5,7 @@ compatibility_date = "2026-09-01"
 # KV：索引状态 + 打赏数据缓存
 [[kv_namespaces]]
 binding = "TIPS"
-id = "local_dev_kv"
+id = "6110f715f2914c80b85621a0117bd30a"
 
 # Cron：每 2 分钟索引一次新的 Memo 事件
 [triggers]

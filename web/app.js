@@ -437,11 +437,11 @@ function tweetHtml(p) {
   const nm = nameOf(p.author);
   const handle = nm ? `@${esc(nm)}` : short(p.author);
   return `<article class="tweet" data-id="${p.id}">
-    <div class="av">${esc(initials(nm || p.author))}</div>
+    <div class="av clickable" data-user="${p.author}" title="${esc(handle)}">${esc(initials(nm || p.author))}</div>
     <div class="tbody">
       <div class="thead">
-        <span class="n">${esc(nm || short(p.author))}</span>${nm ? VER : ''}
-        <span class="h">${esc(handle)}</span><span class="dot">·</span>
+        <span class="n clickable" data-user="${p.author}">${esc(nm || short(p.author))}</span>${nm ? VER : ''}
+        <span class="h clickable" data-user="${p.author}">${esc(handle)}</span><span class="dot">·</span>
         <span class="t">${ago(p.timestamp)}</span>
       </div>
       <div class="tcontent">${esc(p.content)}</div>
@@ -468,10 +468,10 @@ function tweetHtml(p) {
 function replyHtml(r) {
   const nm = nameOf(r.author);
   return `<div class="reply">
-    <div class="av xs">${esc(initials(nm || r.author))}</div>
+    <div class="av xs clickable" data-user="${r.author}">${esc(initials(nm || r.author))}</div>
     <div style="flex:1;min-width:0">
       <div class="rhead">
-        <span class="rn">${esc(nm || short(r.author))}</span>${nm ? VER : ''}
+        <span class="rn clickable" data-user="${r.author}">${esc(nm || short(r.author))}</span>${nm ? VER : ''}
         <span class="rh">${esc(nm ? '@' + nm : short(r.author))}</span>
         <span class="rd">·</span><span class="rt">${ago(r.timestamp)}</span>
       </div>
@@ -603,7 +603,7 @@ async function loadBoard() {
     box.innerHTML = items.slice(0, 5).map((x, i) => {
       const nm = nameOf(x.to);
       const me = account && x.to.toLowerCase() === account.toLowerCase();
-      return `<div class="row ${me ? 'merow' : ''}"><div class="rk">
+      return `<div class="row click ${me ? 'merow' : ''}" data-goto="${x.to}"><div class="rk">
         <span class="idx">${i + 1}</span>
         <div class="av sm">${esc(initials(nm || x.to))}</div>
         <div class="info">
@@ -697,7 +697,7 @@ async function loadScores() {
       $('#scoreCard').style.display = '';
       $('#scoreBox').innerHTML = items.map((x, i) => {
         const nm = nameOf(x.addr);
-        return `<div class="row click"><div class="rk">
+        return `<div class="row click" data-goto="${x.addr}"><div class="rk">
           <span class="idx">${i + 1}</span>
           <div class="av sm">${esc(initials(nm || x.addr))}</div>
           <div class="info">
@@ -717,7 +717,7 @@ async function loadScores() {
       box.innerHTML = arr.length ? arr.map((x, i) => {
         const nm = nameOf(x.addr);
         const me = account && x.addr.toLowerCase() === account.toLowerCase();
-        return `<div class="row ${me ? 'merow' : ''}"><div class="rk">
+        return `<div class="row click ${me ? 'merow' : ''}" data-goto="${x.addr}"><div class="rk">
           <span class="idx">${i + 1}</span>
           <div class="av sm">${esc(initials(nm || x.addr))}</div>
           <div class="info">
@@ -765,13 +765,11 @@ async function loadMyScore() {
   }
 }
 
-function renderAchievements(earnedIds) {
-  const box = $('#achGrid');
+/** 把成就渲染到指定容器（我的成就页 / 用户主页共用） */
+function renderAchInto(sel, earnedIds) {
+  const box = $(sel);
   if (!box) return;
   const set = new Set(earnedIds);
-  const totalPts = ACH_DEFS.filter((a) => set.has(a.id)).reduce((s, a) => s + (a.points || 0), 0);
-  $('#achCount').textContent =
-    `${set.size} / ${ACH_DEFS.length} ${t('ach_progress')} · ${totalPts} ${t('score_pts')}`;
   box.innerHTML = ACH_DEFS.map((a) => {
     const got = set.has(a.id);
     const nm = LANG === 'zh' ? a.name : a.en;
@@ -785,6 +783,16 @@ function renderAchievements(earnedIds) {
       <span class="apts">${got ? '+' : ''}${a.points}</span>
     </div>`;
   }).join('');
+}
+
+function renderAchievements(earnedIds) {
+  const box = $('#achGrid');
+  if (!box) return;
+  const set = new Set(earnedIds);
+  const totalPts = ACH_DEFS.filter((a) => set.has(a.id)).reduce((s, a) => s + (a.points || 0), 0);
+  $('#achCount').textContent =
+    `${set.size} / ${ACH_DEFS.length} ${t('ach_progress')} · ${totalPts} ${t('score_pts')}`;
+  renderAchInto('#achGrid', earnedIds);
 }
 
 // ---------------------------------------------------------------- 发帖
@@ -828,6 +836,14 @@ $('#postBtn').onclick = async () => {
 
 // ---------------------------------------------------------------- 打赏
 document.addEventListener('click', async (e) => {
+  // 点头像 / 用户名 → 打开他的主页
+  const u = e.target.closest('[data-user]');
+  if (u) { e.stopPropagation(); openProfile(u.dataset.user); return; }
+
+  // 点排行榜的行 → 同样打开主页
+  const g = e.target.closest('[data-goto]');
+  if (g) { e.stopPropagation(); openProfile(g.dataset.goto); return; }
+
   // 评论：展开/收起
   const cmt = e.target.closest('[data-cmt]');
   if (cmt) { e.stopPropagation(); await toggleComments(Number(cmt.dataset.cmt)); return; }
@@ -1212,9 +1228,11 @@ async function doCheckin() {
 $('#checkinBtn')?.addEventListener('click', doCheckin);
 
 // ---------------------------------------------------------------- 视图
-const VIEWS = ['home', 'me', 'posts', 'score', 'ach', 'repos'];
+const VIEWS = ['home', 'me', 'posts', 'score', 'ach', 'repos', 'user'];
 const TITLES = { home:'nav_home', me:'nav_profile', posts:'nav_posts',
-                 score:'nav_score', ach:'nav_ach', repos:'nav_repos' };
+                 score:'nav_score', ach:'nav_ach', repos:'nav_repos', user:'nav_profile' };
+
+let VIEWING = null;   // 当前正在查看的用户地址（用户主页用）
 
 function showView(v) {
   VIEWS.forEach((x) => {
@@ -1229,6 +1247,71 @@ function showView(v) {
   else if (v === 'score') loadMyScore();
   else if (v === 'ach') loadMyAch();
   else if (v === 'repos') loadMyRepos();
+  else if (v === 'user' && VIEWING) loadUserProfile(VIEWING);
+}
+
+/** 打开某个地址的主页 */
+function openProfile(addr) {
+  if (!addr) return;
+  const a = getAddress(addr);
+  if (account && a.toLowerCase() === account.toLowerCase()) { showView('me'); return; }
+  VIEWING = a;
+  showView('user');
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+/** 加载用户主页 */
+async function loadUserProfile(addr) {
+  await Promise.all([loadIdentities(), loadAchDefs()]);
+  const i = identOf(addr);
+  const nm = nameOf(addr) || short(addr);
+
+  $('#uName').innerHTML = esc(nm) + (i.github || i.username ? ' ' + VER : '');
+  $('#uAddr').textContent = addr;
+  $('#uAv').textContent = initials(nm);
+  $('#uBadges').innerHTML = [
+    i.username ? `<span class="chip">@${esc(i.username)}</span>` : '',
+    i.github ? `<span class="chip">GitHub · ${esc(i.github)}</span>` : '',
+    i.x ? `<span class="chip">X · ${esc(i.x)}</span>` : '',
+  ].join('') || `<span style="font-size:12.5px;color:var(--dim)">${t('unbound')}</span>`;
+
+  // 积分 + 成就
+  try {
+    const r = await api('/api/score/' + addr);
+    const s = r.score;
+    if (s) {
+      $('#uScore').textContent = s.score;
+      $('#uRank').textContent = `${t('rank_of')} ${s.rank}`;
+      $('#uStats').innerHTML = [
+        [t('score_detail_posts'), s.posts], [t('score_detail_replies'), s.replies],
+        [t('score_detail_got'), s.gotReplies], [t('score_detail_tips'), s.tipsOut],
+        [t('score_detail_earned'), `${s.amountIn} USDC`],
+      ].map(([k, v]) => `<span>${k} <b style="color:var(--fg)">${v}</b></span>`).join('');
+    } else {
+      $('#uScore').textContent = '0';
+      $('#uRank').textContent = t('no_activity');
+      $('#uStats').innerHTML = '';
+    }
+    renderAchInto('#uAchGrid', r.achievements || []);
+  } catch {
+    $('#uScore').textContent = '—';
+    $('#uStats').innerHTML = '';
+    renderAchInto('#uAchGrid', []);
+  }
+
+  // 帖子
+  const box = $('#uPosts');
+  try {
+    const r = await api('/api/user/' + addr);
+    const items = r.items || [];
+    $('#uPostsCount').textContent = `${items.length}`;
+    box.innerHTML = items.length
+      ? items.map(tweetHtml).join('')
+      : `<div style="color:var(--dim);font-size:14px">${t('no_posts_yet')}</div>`;
+    items.forEach((p) => loadTips(p.id));
+  } catch {
+    box.innerHTML = `<div style="color:var(--dim);font-size:14px">${t('load_failed')}</div>`;
+  }
 }
 document.querySelectorAll('.nitem').forEach((a) =>
   a.onclick = (e) => { e.preventDefault(); showView(a.dataset.nav); }
