@@ -1,0 +1,639 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>TipJar — On-chain Twitter</title>
+<style>
+  :root{
+    --bg:#09090b;
+    --panel:rgba(255,255,255,.035);
+    --panel2:rgba(255,255,255,.06);
+    --hover:rgba(255,255,255,.055);
+    --line:rgba(255,255,255,.08);
+    --line2:rgba(255,255,255,.14);
+    --fg:#fafaf9;
+    --dim:#a1a1aa;
+    --dim2:#71717a;
+    --gold:#d4af37;
+    --gold-b:#eab308;
+    --gold-dim:rgba(212,175,55,.35);
+    --gold-glow:rgba(234,179,8,.28);
+    --green:#2ee6a8;
+    --red:#ef4444;
+    --max:1220px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    color:var(--fg);
+    font:15px/1.45 Inter,-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    -webkit-font-smoothing:antialiased;overflow-y:scroll;
+    background:
+      radial-gradient(1000px 560px at 10% -10%, rgba(212,175,55,.09), transparent 62%),
+      radial-gradient(820px 500px at 95% 2%, rgba(234,179,8,.055), transparent 60%),
+      radial-gradient(900px 700px at 50% 112%, rgba(212,175,55,.035), transparent 65%),
+      var(--bg);
+    background-attachment:fixed;
+  }
+  a{color:inherit;text-decoration:none}
+  button{font-family:inherit;cursor:pointer;border:0;background:none;color:inherit}
+  svg{display:block}
+  ::-webkit-scrollbar{width:9px}
+  ::-webkit-scrollbar-thumb{background:rgba(255,255,255,.12);border-radius:5px;border:2px solid transparent;background-clip:content-box}
+  ::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,.2);background-clip:content-box}
+  ::-webkit-scrollbar-track{background:transparent}
+
+  .app{display:flex;max-width:var(--max);margin:0 auto;min-height:100vh}
+
+  /* ==================== 左栏 ==================== */
+  .side{width:252px;flex:0 0 252px;padding:0 12px;position:sticky;top:0;height:100vh}
+  .side-inner{display:flex;flex-direction:column;height:100%;padding:10px 0 16px}
+  .logo{display:flex;align-items:center;gap:9px;padding:10px 12px;border-radius:14px;transition:.18s;width:fit-content}
+  .logo:hover{background:var(--hover)}
+  .logo b{font-size:19px;font-weight:800;letter-spacing:-.3px}
+  .logo .tag{font-size:9.5px;font-weight:800;color:var(--green);border:1px solid rgba(46,230,168,.45);
+             background:rgba(46,230,168,.1);border-radius:99px;padding:2.5px 7px;letter-spacing:.5px}
+
+  .nav{display:flex;flex-direction:column;gap:3px;margin-top:12px}
+  .nitem{display:flex;align-items:center;gap:16px;padding:11.5px 13px;border-radius:14px;
+         font-size:17.5px;font-weight:500;transition:.18s;width:fit-content;padding-right:26px;color:var(--dim)}
+  .nitem:hover{background:var(--hover);color:var(--fg)}
+  .nitem.on{font-weight:700;color:var(--fg);background:linear-gradient(90deg,rgba(212,175,55,.13),transparent 85%)}
+  .nitem svg{width:23px;height:23px;flex:0 0 auto}
+
+  .postbtn{margin:18px 0 0;color:#1a1408;border-radius:14px;padding:15px 0;font-size:16px;font-weight:800;
+           width:100%;transition:.18s;letter-spacing:.2px;
+           background:linear-gradient(135deg,var(--gold),var(--gold-b));
+           box-shadow:0 6px 22px -6px var(--gold-glow)}
+  .postbtn:hover{transform:translateY(-2px);box-shadow:0 10px 28px -6px rgba(234,179,8,.42)}
+  .postbtn .icon{display:none}
+
+  /* --- 账户条 --- */
+  .acct-wrap{margin-top:auto;position:relative}
+  .acct{display:flex;align-items:center;gap:11px;padding:10px 12px;border-radius:15px;transition:.18s;cursor:pointer;
+        border:1px solid transparent}
+  .acct:hover{background:var(--hover);border-color:var(--line)}
+  .acct .meta{flex:1;min-width:0;line-height:1.3}
+  .acct .n{font-weight:700;font-size:14.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+           display:flex;align-items:center;gap:5px}
+  .acct .h{color:var(--dim);font-size:12.5px;font-family:ui-monospace,Menlo,monospace;
+           white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .acct .bal{font-size:12.5px;color:var(--green);font-weight:700;white-space:nowrap}
+  .dot{width:7px;height:7px;border-radius:50%;background:var(--green);flex:0 0 auto;
+       box-shadow:0 0 0 3px rgba(212,175,55,.18)}
+
+  .menu{position:absolute;left:0;right:0;bottom:calc(100% + 8px);background:#1a2030;border:1px solid var(--line2);
+        border-radius:15px;padding:6px;box-shadow:0 18px 44px -12px rgba(0,0,0,.85);display:none;z-index:40}
+  .menu.on{display:block}
+  .mitem{display:flex;align-items:center;gap:11px;padding:11px 13px;border-radius:11px;font-size:14.5px;
+         transition:.15s;width:100%;text-align:left;color:var(--fg)}
+  .mitem:hover{background:var(--hover)}
+  .mitem svg{width:18px;height:18px;color:var(--dim);flex:0 0 auto}
+  .mitem.danger{color:var(--red)}
+  .mitem.danger svg{color:var(--red)}
+  .msep{height:1px;background:var(--line);margin:5px 8px}
+
+  /* ==================== 头像 ==================== */
+  .av{width:40px;height:40px;border-radius:50%;flex:0 0 auto;display:flex;align-items:center;
+      justify-content:center;font-weight:800;color:#fff;font-size:14px;letter-spacing:.3px;
+      background:linear-gradient(135deg,var(--gold),var(--purple));user-select:none;
+      box-shadow:inset 0 0 0 1px rgba(255,255,255,.1)}
+  .av.sm{width:34px;height:34px;font-size:12.5px}
+  .av.lg{width:52px;height:52px;font-size:18px}
+  .av.ghost{background:var(--panel2);color:var(--dim2);box-shadow:inset 0 0 0 1px var(--line)}
+
+  /* ==================== 中栏 ==================== */
+  .main{flex:1;min-width:0;max-width:610px;min-height:100vh;
+        background:rgba(255,255,255,.02);backdrop-filter:blur(10px);border-left:1px solid var(--line);border-right:1px solid var(--line);
+        backdrop-filter:blur(2px)}
+  .topbar{position:sticky;top:0;z-index:10;padding:16px 20px;border-bottom:1px solid var(--line);
+          background:rgba(11,13,18,.8);backdrop-filter:blur(16px)}
+  .topbar h1{font-size:20px;font-weight:800;letter-spacing:-.3px}
+
+  .composer{display:flex;gap:13px;padding:18px 20px;border-bottom:1px solid var(--line)}
+  .composer textarea{flex:1;background:transparent;border:0;outline:none;color:var(--fg);
+                     font:19px/1.45 inherit;resize:none;min-height:52px;padding-top:9px;font-family:inherit}
+  .composer textarea::placeholder{color:var(--dim2)}
+  .cbar{display:flex;align-items:center;justify-content:flex-end;gap:14px;margin-top:12px;
+        padding-top:12px;border-top:1px solid var(--line)}
+  .chint{font-size:12.5px;color:var(--dim2);margin-right:auto;display:flex;align-items:center;gap:6px}
+  .chint svg{width:14px;height:14px;color:var(--green)}
+  .csubmit{background:linear-gradient(135deg,var(--gold),var(--gold-b));color:#1a1408;border-radius:99px;
+           padding:10px 24px;font-size:15px;font-weight:800;transition:.18s;
+           box-shadow:0 5px 18px -6px var(--gold-glow)}
+  .csubmit:disabled{opacity:.35;box-shadow:none;cursor:not-allowed}
+  .csubmit:not(:disabled):hover{transform:translateY(-1px);box-shadow:0 8px 24px -6px rgba(234,179,8,.4)}
+
+  .tweet{display:flex;gap:13px;padding:15px 20px;border-bottom:1px solid var(--line);transition:.18s}
+  .tweet:hover{background:rgba(255,255,255,.035)}
+  .tbody{flex:1;min-width:0}
+  .thead{display:flex;align-items:center;gap:5px;font-size:15px;flex-wrap:wrap}
+  .thead .n{font-weight:700;max-width:190px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .thead .n:hover{text-decoration:underline}
+  .thead .h,.thead .dot,.thead .t{color:var(--dim);font-size:14.5px}
+  .ver{width:17px;height:17px;flex:0 0 auto;color:var(--gold)}
+  .tcontent{font-size:15px;line-height:1.55;white-space:pre-wrap;word-break:break-word;margin-top:4px;color:#dfe6f2}
+  .tact{display:flex;align-items:center;gap:2px;margin-top:12px;margin-left:-9px}
+  .act{display:flex;align-items:center;gap:5px;color:var(--dim2);font-size:12.5px;
+       padding:7px 10px;border-radius:99px;transition:.15s}
+  .act svg{width:17.5px;height:17.5px;fill:currentColor}
+  .act:hover{color:var(--gold);background:rgba(212,175,55,.13)}
+  .act.tip:hover{color:var(--green);background:rgba(46,230,168,.13)}
+  .act.tip.done{color:var(--green)}
+  .tipsum{color:var(--green);font-size:12.5px;font-weight:700;padding:7px 4px}
+
+  /* ---------- 评论区 ---------- */
+  .av.xs{width:28px;height:28px;font-size:10.5px}
+  .cbox{border-top:1px solid var(--line);margin-top:13px;padding-top:13px}
+  .cload{color:var(--dim2);font-size:13px;padding:6px 0}
+  .clist{display:flex;flex-direction:column}
+  .reply{display:flex;gap:10px;padding:9px 0}
+  .reply + .reply{border-top:1px solid rgba(255,255,255,.05)}
+  .rhead{display:flex;align-items:center;gap:5px;font-size:13.5px;flex-wrap:wrap}
+  .rhead .rn{font-weight:700}
+  .rhead .rh,.rhead .rd,.rhead .rt{color:var(--dim2);font-size:13px}
+  .rbody{font-size:14px;line-height:1.5;color:#e4e4e7;white-space:pre-wrap;word-break:break-word;margin-top:2px}
+  .cempty{color:var(--dim2);font-size:13px;padding:6px 0 10px}
+  .cinput{display:flex;gap:9px;align-items:center;margin-top:11px}
+  .cinput input{flex:1;background:var(--panel2);border:1px solid var(--line);border-radius:99px;
+                padding:9px 15px;color:var(--fg);font-size:13.5px;outline:none;font-family:inherit}
+  .cinput input:focus{border-color:var(--gold-dim);background:rgba(255,255,255,.04)}
+  .cinput input::placeholder{color:var(--dim2)}
+  .csend{background:var(--gold);color:#1a1408;border-radius:99px;padding:8px 17px;
+         font-size:13px;font-weight:700;transition:.15s;white-space:nowrap}
+  .csend:hover{background:var(--gold-b)}
+  .csend:disabled{opacity:.5;cursor:not-allowed}
+  .act.cmt:hover{color:var(--gold);background:rgba(212,175,55,.12)}
+
+  /* 空状态 */
+  .empty{padding:64px 40px;text-align:center}
+  .empty .ico{width:64px;height:64px;margin:0 auto 20px;color:var(--line2);
+              filter:drop-shadow(0 8px 24px rgba(212,175,55,.22))}
+  .empty h3{font-size:20px;font-weight:800;margin-bottom:9px;letter-spacing:-.2px}
+  .empty p{font-size:14.5px;color:var(--dim);line-height:1.65;margin-bottom:24px}
+  .empty .cta{background:linear-gradient(135deg,var(--gold),var(--gold-b));color:#1a1408;border-radius:99px;
+              padding:12px 30px;font-size:15px;font-weight:800;transition:.18s;
+              box-shadow:0 6px 20px -6px var(--gold-glow)}
+  .empty .cta:hover{transform:translateY(-2px)}
+
+  /* ==================== 右栏 ==================== */
+  .rail{width:332px;flex:0 0 332px;padding:16px 18px 0;position:sticky;top:0;height:100vh;overflow-y:auto}
+  .card{background:var(--panel);backdrop-filter:blur(14px);border:1px solid var(--line);
+        border-radius:17px;margin-bottom:14px;overflow:hidden;
+        box-shadow:0 10px 30px -18px rgba(0,0,0,.9)}
+  .card h2{font-size:16.5px;font-weight:800;padding:15px 17px 11px;letter-spacing:-.2px;
+           display:flex;align-items:center;gap:8px}
+  .card h2 svg{width:16px;height:16px;color:var(--gold)}
+  .row{padding:12px 17px;transition:.15s}
+  .row.click{cursor:pointer}
+  .row.click:hover{background:rgba(255,255,255,.045)}
+  .row.merow{background:rgba(212,175,55,.085);box-shadow:inset 2px 0 0 var(--gold)}
+  .row .l1{font-size:12.5px;color:var(--dim2)}
+  .row .l2{font-size:15px;font-weight:700;margin:2px 0}
+  .rk{display:flex;align-items:center;gap:11px}
+  .rk .idx{font-size:12.5px;color:var(--dim2);width:13px;font-weight:700}
+  .rk .info{flex:1;min-width:0}
+  .rk .amt{font-size:13.5px;font-weight:800;color:var(--green);white-space:nowrap}
+  .footer{padding:8px 17px 44px;color:var(--dim2);font-size:12.5px;line-height:1.75}
+  .footer a{color:var(--dim)}
+  .footer a:hover{color:var(--gold)}
+  /* 卡片空状态 / 占位 */
+  .cph{padding:15px 17px;color:var(--dim2);font-size:13px;line-height:1.7}
+  .cph b{color:var(--dim)}
+  .cph .cta2{display:inline-block;margin-top:7px;font-size:12.5px;color:var(--gold);cursor:pointer;
+             background:none;border:0;padding:0;font-family:inherit}
+  .cph .cta2:hover{text-decoration:underline}
+  /* 左栏平台数据 */
+  .stats{margin-top:14px;border:1px solid var(--line);border-radius:14px;overflow:hidden;
+         background:rgba(255,255,255,.022)}
+  .stats .st{display:flex;align-items:center;justify-content:space-between;padding:9px 13px;font-size:12.5px}
+  .stats .st + .st{border-top:1px solid var(--line)}
+  .stats .st .k{color:var(--dim2)}
+  .stats .st .v{font-weight:700;color:var(--fg)}
+  .stats .st .v.gold{color:var(--gold)}
+
+  /* 签到按钮 */
+  .checkinbtn{display:flex;align-items:center;gap:9px;margin-top:11px;width:100%;justify-content:center;
+              background:rgba(212,175,55,.1);border:1px solid rgba(212,175,55,.35);border-radius:13px;
+              padding:11px 14px;font-size:13.5px;font-weight:700;color:var(--gold);transition:.18s;
+              font-family:inherit}
+  .checkinbtn:hover{background:rgba(212,175,55,.18);border-color:rgba(212,175,55,.6)}
+  .checkinbtn:disabled{opacity:.55;cursor:not-allowed}
+  .checkinbtn.done{background:rgba(46,230,168,.1);border-color:rgba(46,230,168,.35);color:var(--green)}
+  .checkinbtn.done:hover{background:rgba(46,230,168,.14)}
+  .checkinbtn .ci{font-size:15px;line-height:1}
+  /* 语言切换 */
+  .langsw{display:flex;gap:5px;margin-top:10px}
+  .langsw button{flex:1;padding:7px 0;font-size:12px;font-weight:700;color:var(--dim2);
+                 border:1px solid var(--line);border-radius:9px;transition:.15s;font-family:inherit}
+  .langsw button.on{color:var(--gold);border-color:rgba(212,175,55,.45);background:rgba(212,175,55,.1)}
+  .langsw button:hover{color:var(--fg)}
+
+  /* ==================== 个人资料页 ==================== */
+  .pcard{margin:18px 20px;background:var(--panel);backdrop-filter:blur(14px);
+         border:1px solid var(--line);border-radius:17px;padding:20px;
+         box-shadow:0 10px 30px -18px rgba(0,0,0,.9)}
+  .ptitle{font-size:15.5px;font-weight:800;margin-bottom:5px;display:flex;align-items:center;gap:8px}
+  .ptitle svg{width:15px;height:15px;color:var(--gold)}
+  .pdesc{font-size:13px;color:var(--dim);margin-bottom:16px;line-height:1.6}
+  .subhead{font-size:12.5px;font-weight:700;color:var(--dim);margin-bottom:9px;letter-spacing:.3px}
+  .divider{height:1px;background:var(--line);margin:20px 0}
+  .togglebtn{display:flex;align-items:center;gap:9px;background:var(--panel2);border:1px solid var(--line);
+             border-radius:12px;padding:11px 16px;font-size:14px;font-weight:700;color:var(--fg);
+             transition:.18s;width:100%;justify-content:center;font-family:inherit}
+  .togglebtn:hover{background:rgba(255,255,255,.07);border-color:var(--line2)}
+  .togglebtn svg{width:17px;height:17px;color:var(--gold);flex:0 0 auto}
+  .togglebtn .chev{transition:.22s;color:var(--dim);margin-left:2px}
+  .togglebtn.open .chev{transform:rotate(180deg)}
+  .oauthbtn{display:flex;align-items:center;gap:10px;background:#fff;color:#0a0a0a;border-radius:12px;
+            padding:11px 20px;font-size:14px;font-weight:700;transition:.18s;
+            box-shadow:0 4px 14px -6px rgba(0,0,0,.6)}
+  .oauthbtn:hover{transform:translateY(-1px);box-shadow:0 8px 20px -6px rgba(0,0,0,.7)}
+  .repo{border:1px solid var(--line);border-radius:13px;padding:14px 16px;margin-bottom:10px;
+        background:rgba(255,255,255,.025);transition:.18s}
+  .repo:hover{border-color:var(--line2);background:rgba(255,255,255,.05)}
+  .repo h4{font-size:14.5px;margin-bottom:5px;font-weight:700}
+  .repo h4 a:hover{color:var(--gold)}
+  .repo p{font-size:13px;color:var(--dim);margin-bottom:9px;line-height:1.55}
+  .repo .meta{display:flex;gap:15px;font-size:12px;color:var(--dim2);flex-wrap:wrap}
+  .chip{font-size:12px;color:var(--green);border:1px solid rgba(46,230,168,.35);
+        background:rgba(46,230,168,.1);border-radius:99px;padding:3.5px 11px;font-weight:600}
+
+  /* 成就徽章 */
+  .ach{display:flex;gap:10px;align-items:center;border:1px solid var(--line);border-radius:12px;
+       padding:11px 13px;background:rgba(255,255,255,.02);opacity:.38;transition:.18s}
+  .ach.got{opacity:1;border-color:rgba(212,175,55,.42);background:rgba(212,175,55,.075);
+           box-shadow:0 4px 16px -10px rgba(212,175,55,.7)}
+  .ach .aico{font-size:20px;line-height:1;flex:0 0 auto;filter:grayscale(1) opacity(.7)}
+  .ach.got .aico{filter:none}
+  .ach .aname{font-size:13.5px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .ach .adesc{font-size:11.5px;color:var(--dim2);margin-top:2px;line-height:1.4}
+  .ach .apts{font-size:11.5px;font-weight:800;color:var(--gold);opacity:.45;white-space:nowrap;flex:0 0 auto}
+  .ach.got .apts{opacity:1}
+
+  /* 平台说明卡片 */
+  .feat{border:1px solid var(--line);border-radius:13px;padding:15px;background:rgba(255,255,255,.022);
+        transition:.18s}
+  .feat:hover{border-color:var(--line2);background:rgba(255,255,255,.04)}
+  .feat .fico{font-size:21px;line-height:1;margin-bottom:9px}
+  .feat .ftitle{font-size:14px;font-weight:700;margin-bottom:5px}
+  .feat .fdesc{font-size:12.5px;color:var(--dim);line-height:1.62}
+
+  /* ==================== 响应式 ==================== */
+  @media(max-width:1080px){.rail{display:none}}
+  @media(max-width:880px){
+    .side{width:78px;flex:0 0 78px}
+    .nitem span,.logo b,.logo .tag{display:none}
+    .nitem{padding:12px;padding-right:12px}
+    .postbtn{width:52px;height:52px;padding:0;margin:14px auto 0;
+             display:flex;align-items:center;justify-content:center}
+    .postbtn .txt{display:none}.postbtn .icon{display:block}
+    .acct .meta{display:none}
+    .acct{justify-content:center;padding:10px}
+  }
+  @media(max-width:600px){.side{display:none}.main{border:0}}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ==================== 左栏 ==================== -->
+  <aside class="side">
+    <div class="side-inner">
+      <a href="#" class="logo" id="logoBtn">
+        <svg viewBox="0 0 24 24" width="27" height="27" fill="url(#lg)">
+          <defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stop-color="#d4af37"/><stop offset="1" stop-color="#eab308"/>
+          </linearGradient></defs>
+          <path d="M12 2.5c-3.6 0-6.5 2.9-6.5 6.5 0 1.3.4 2.5 1 3.5L5 21.5l5.2-1.7c.6.1 1.2.2 1.8.2 3.6 0 6.5-2.9 6.5-6.5S15.6 2.5 12 2.5zm0 11.5c-.5 0-1-.1-1.5-.2l-.4-.1-3.1 1 .8-3-.2-.4c-.5-.8-.8-1.7-.8-2.6 0-2.8 2.3-5 5.2-5s5.2 2.2 5.2 5-2.3 5.3-5.2 5.3z"/>
+        </svg>
+        <b>TipJar</b>
+        <span class="tag">ARC</span>
+      </a>
+
+      <nav class="nav">
+        <a href="#" class="nitem on" data-nav="home">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 1.696L.622 8.807l1.06 1.696L3 9.679V19.5C3 20.881 4.119 22 5.5 22h13c1.381 0 2.5-1.119 2.5-2.5V9.679l1.318.824 1.06-1.696L12 1.696zM12 16.5c-1.933 0-3.5-1.567-3.5-3.5s1.567-3.5 3.5-3.5 3.5 1.567 3.5 3.5-1.567 3.5-3.5 3.5z"/></svg>
+          <span data-i18n="nav_home">Home</span>
+        </a>
+        <a href="#" class="nitem" data-nav="me">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M5.651 19h12.698c-.337-1.8-1.023-3.21-1.945-4.19C15.318 13.65 13.838 13 12 13s-3.317.65-4.404 1.81c-.922.98-1.608 2.39-1.945 4.19zm.486-5.56C7.627 11.85 9.648 11 12 11s4.373.85 5.863 2.44c1.477 1.58 2.366 3.8 2.632 6.46l.11 1.1H3.395l.11-1.1c.266-2.66 1.155-4.88 2.632-6.46zM12 4c-1.105 0-2 .9-2 2s.895 2 2 2 2-.9 2-2-.895-2-2-2zM8 6c0-2.21 1.791-4 4-4s4 1.79 4 4-1.791 4-4 4-4-1.79-4-4z"/></svg>
+          <span data-i18n="nav_profile">Profile</span>
+        </a>
+        <a href="#" class="nitem" data-nav="posts">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm2 18H6V4h7v5h5v11z"/></svg>
+          <span data-i18n="nav_posts">My Posts</span>
+        </a>
+        <a href="#" class="nitem" data-nav="score">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M5 3h14a2 2 0 012 2v3a4 4 0 01-3 3.87V13a5 5 0 01-4 4.9V20h3v2H7v-2h3v-2.1A5 5 0 016 13v-1.13A4 4 0 013 8V5a2 2 0 012-2zm0 2v3a2 2 0 002 2V5H5zm14 0h-2v5a2 2 0 002-2V5z"/></svg>
+          <span data-i18n="nav_score">My Score</span>
+        </a>
+        <a href="#" class="nitem" data-nav="ach">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l2.9 6.3 6.9.7-5.1 4.6 1.4 6.8L12 17l-6.1 3.4 1.4-6.8L2.2 9l6.9-.7L12 2z"/></svg>
+          <span data-i18n="nav_ach">Achievements</span>
+        </a>
+        <a href="#" class="nitem" data-nav="repos">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-1-5h2v2h-2zm0-8h2v6h-2z"/></svg>
+          <span data-i18n="nav_repos">GitHub Projects</span>
+        </a>
+      </nav>
+
+      <button class="postbtn" id="sidePost">
+        <span class="txt" data-i18n="btn_post">Post</span>
+        <svg class="icon" viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M23 3c-6.62-.1-10.38 2.421-13.05 6.03C7.29 12.61 6 17.331 6 22h2c0-1.007.07-2.012.19-3H12c4.1 0 7.48-3.082 7.94-7.054C22.79 10.147 23.17 6.359 23 3zm-7 8h-1.5v2H16c.63-.016 1.2-.08 1.72-.188C16.95 15.24 14.68 17 12 17H8.55c.57-2.512 1.57-4.851 3-6.78 2.16-2.912 5.29-4.911 9.45-5.187C20.95 8.079 19.9 11 16 11zM4 9V6H1V4h3V1h2v3h3v2H6v3H4z"/></svg>
+      </button>
+
+      <!-- 每日签到 -->
+      <button class="checkinbtn" id="checkinBtn">
+        <span class="ci">📅</span>
+        <span class="ct" id="checkinText">Daily check-in +15</span>
+      </button>
+
+      <!-- 平台数据 -->
+      <div class="stats">
+        <div class="st"><span class="k" data-i18n="stat_posts">Posts</span><span class="v" id="sPosts">—</span></div>
+        <div class="st"><span class="k" data-i18n="stat_users">Participants</span><span class="v" id="sUsers">—</span></div>
+        <div class="st"><span class="k" data-i18n="stat_tips">Total tipped</span><span class="v gold" id="sTips">—</span></div>
+        <div class="st"><span class="k" data-i18n="stat_my_score">My score</span><span class="v gold" id="sMyScore">—</span></div>
+        <div class="st"><span class="k" data-i18n="stat_streak">Check-in streak</span><span class="v" id="sStreak">—</span></div>
+      </div>
+
+      <!-- 语言切换 -->
+      <div class="langsw">
+        <button data-lang="en" class="on">EN</button>
+        <button data-lang="zh">中文</button>
+      </div>
+
+      <!-- 账户条 + 菜单 -->
+      <div class="acct-wrap">
+        <div class="menu" id="acctMenu">
+          <button class="mitem" id="mCopy">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
+            <span data-i18n="copy_addr">Copy address</span>
+          </button>
+          <button class="mitem" id="mExplorer">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M18.36 5.64c-1.95-1.96-5.11-1.96-7.07 0L9.88 7.05 8.46 5.64l1.42-1.42c2.73-2.73 7.16-2.73 9.9 0 2.73 2.74 2.73 7.17 0 9.9l-1.42 1.42-1.41-1.42 1.41-1.41c1.96-1.96 1.96-5.12 0-7.07zm-2.12 3.53l-7.07 7.07-1.41-1.41 7.07-7.07 1.41 1.41zm-12.02.71l1.42-1.42 1.41 1.42-1.41 1.41c-1.96 1.96-1.96 5.12 0 7.07 1.95 1.96 5.11 1.96 7.07 0l1.41-1.41 1.42 1.41-1.42 1.42c-2.73 2.73-7.16 2.73-9.9 0-2.73-2.74-2.73-7.17 0-9.9z"/></svg>
+            <span data-i18n="view_explorer">View in explorer</span>
+          </button>
+          <div class="msep"></div>
+          <button class="mitem danger" id="mDisconnect">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm5 11H7v-2h10v2z"/></svg>
+            <span data-i18n="disconnect">Disconnect</span>
+          </button>
+        </div>
+
+        <div class="acct" id="acctBox">
+          <div class="av ghost" id="acctAv">?</div>
+          <div class="meta">
+            <div class="n" id="acctName">Not connected</div>
+            <div class="h" id="acctAddr">Click to connect</div>
+          </div>
+          <span class="bal" id="acctBal"></span>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ==================== 中栏 ==================== -->
+  <main class="main">
+    <div class="topbar"><h1 id="pageTitle">Home</h1></div>
+
+    <!-- 首页 -->
+    <div id="view-home">
+      <div class="composer">
+        <div class="av ghost" id="myAv">?</div>
+        <div style="flex:1;min-width:0">
+          <textarea id="composeBox" rows="1" placeholder="What's new?" data-i18n-ph="compose_ph"></textarea>
+          <div class="cbar">
+            <span class="chint">
+              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 1.75C6.34 1.75 1.75 6.34 1.75 12S6.34 22.25 12 22.25 22.25 17.66 22.25 12 17.66 1.75 12 1.75zm-1 5.25h2v6h-2V7zm0 8h2v2h-2v-2z"/></svg>
+              <span data-i18n="compose_hint">Written on-chain permanently · ~$0.0014</span>
+            </span>
+            <span id="postStatus" style="font-size:13px;color:var(--dim)"></span>
+            <button class="csubmit" id="postBtn" disabled data-i18n="btn_post">Post</button>
+          </div>
+        </div>
+      </div>
+      <div id="feed"></div>
+    </div>
+
+    <!-- 个人资料 -->
+    <div id="view-me" style="display:none">
+      <div class="pcard">
+        <div style="display:flex;align-items:center;gap:15px">
+          <div class="av lg ghost" id="meAv">?</div>
+          <div style="flex:1;min-width:0">
+            <div style="font-size:20px;font-weight:800;display:flex;align-items:center;gap:7px;
+                        letter-spacing:-.3px" id="meName">Not connected</div>
+            <div style="color:var(--dim);font-size:13px;font-family:ui-monospace,Menlo,monospace;
+                        margin-top:3px;word-break:break-all" id="meAddr">—</div>
+          </div>
+          <button class="csubmit" id="connectBtn2" data-i18n="btn_connect">Connect Wallet</button>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:16px;align-items:center" id="meBadges"></div>
+        <button class="togglebtn" id="identityToggle" style="margin-top:14px">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>
+          <span id="identityToggleText">Set up identity</span>
+          <svg class="chev" viewBox="0 0 24 24" fill="currentColor"><path d="M12 16.41l-6.71-6.7 1.42-1.42 5.29 5.3 5.29-5.3 1.42 1.42z"/></svg>
+        </button>
+      </div>
+
+      <div class="pcard" id="identityCard" style="display:none">
+        <div class="ptitle">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>
+          <span data-i18n="id_title">Identity</span>
+          <span style="font-size:11.5px;font-weight:600;color:var(--dim2)" data-i18n="id_badge">On-chain unique · set once</span>
+        </div>
+        <div class="pdesc">
+          <span data-i18n="id_desc">Username: 3-20 chars, lowercase letters, digits and underscores only —</span>
+          <b style="color:var(--gold)" data-i18n="id_warn">cannot be changed once set</b><span data-i18n="id_desc2">. Binding uses one-click OAuth, no manual typing. Both show on your posts.</span>
+        </div>
+
+        <!-- 用户名 -->
+        <div class="subhead" data-i18n="id_username">Username</div>
+        <div style="display:flex;gap:11px;align-items:center;flex-wrap:wrap">
+          <div style="display:flex;align-items:center;background:var(--panel2);border:1px solid var(--line);
+                      border-radius:12px;padding-left:13px;transition:.15s" id="nameWrap">
+            <span style="color:var(--dim2);font-size:15px">@</span>
+            <input id="nameInput" maxlength="20" placeholder="yourname" spellcheck="false" autocomplete="off"
+                   style="background:none;border:0;outline:none;color:var(--fg);font-size:14.5px;
+                          padding:11px 8px;width:165px;font-family:inherit;letter-spacing:.3px" />
+          </div>
+          <span id="nameHint" style="font-size:13px;min-width:70px"></span>
+          <button class="csubmit" id="setNameBtn" style="padding:11px 22px;font-size:14px">Set</button>
+        </div>
+
+        <div class="divider"></div>
+
+        <!-- 绑定账号 -->
+        <div class="subhead" data-i18n="id_bind">Linked accounts</div>
+        <div style="display:flex;gap:11px;flex-wrap:wrap">
+          <button class="oauthbtn" data-p="github">
+            <svg viewBox="0 0 16 16" width="18" height="18" fill="#0a0a0a"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+            <span data-i18n="oauth_gh">Continue with GitHub</span>
+          </button>
+          <button class="oauthbtn" data-p="twitter">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="#0a0a0a"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
+            <span data-i18n="oauth_x">Continue with X</span>
+          </button>
+        </div>
+        <div id="bindStatus" style="font-size:13px;color:var(--dim);margin-top:12px"></div>
+      </div>
+
+      <!-- 平台说明 -->
+      <div class="pcard">
+        <div class="ptitle">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>
+          <span data-i18n="about_title">What is TipJar</span>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;margin-top:6px">
+          <div class="feat">
+            <div class="fico">⛓️</div>
+            <div class="ftitle" data-i18n="feat1_t">Posts are permanent</div>
+            <div class="fdesc" data-i18n="feat1_d">Content is written into Arc event logs. No server can delete or alter it. ~$0.0014 per post.</div>
+          </div>
+          <div class="feat">
+            <div class="fico">💸</div>
+            <div class="ftitle" data-i18n="feat2_t">Zero-custody tipping</div>
+            <div class="fdesc" data-i18n="feat2_d">USDC goes straight from your wallet to the author. The contract holds nothing and takes no cut.</div>
+          </div>
+          <div class="feat">
+            <div class="fico">🏷️</div>
+            <div class="ftitle" data-i18n="feat3_t">On-chain identity</div>
+            <div class="fdesc" data-i18n="feat3_d">Usernames are globally unique, first-come-first-served. One-click OAuth binding, forks auto-excluded.</div>
+          </div>
+          <div class="feat">
+            <div class="fico">🏆</div>
+            <div class="ftitle" data-i18n="feat4_t">Points & achievements</div>
+            <div class="fdesc" data-i18n="feat4_d">Posting, replying and tipping all earn points. 20 achievements unlock automatically from on-chain facts.</div>
+          </div>
+        </div>
+        <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--line);
+                    display:flex;gap:20px;flex-wrap:wrap;font-size:12.5px;color:var(--dim2)">
+          <span data-i18n="rail_network">Network<b style="color:var(--dim)" data-i18n="val_mainnet">Arc Mainnet</b></span>
+          <span>chainId <b style="color:var(--dim)">5042</b></span>
+          <span>gas <b style="color:var(--dim)">USDC</b></span>
+          <a href="https://explorer.arc.io/address/0x005a5a60054e56d082ed0de3ccc6cb72c2a3350e"
+             target="_blank" rel="noopener" style="color:var(--gold)" data-i18n="about_contract">View contract ↗</a>
+        </div>
+      </div>
+    </div>
+
+    <!-- ========== 我的帖子 ========== -->
+    <div id="view-posts" style="display:none">
+      <div class="pcard">
+        <div class="ptitle">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm2 18H6V4h7v5h5v11z"/></svg>
+          <span data-i18n="nav_posts">My Posts</span>
+          <span id="myPostsCount" style="font-size:11.5px;font-weight:600;color:var(--dim2)"></span>
+        </div>
+        <div id="myPosts"><div style="color:var(--dim);font-size:14px" data-i18n="ph_connect_first">Connect wallet to view</div></div>
+      </div>
+    </div>
+
+    <!-- ========== 我的积分 ========== -->
+    <div id="view-score" style="display:none">
+      <div class="pcard">
+        <div class="ptitle">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M5 3h14a2 2 0 012 2v3a4 4 0 01-3 3.87V13a5 5 0 01-4 4.9V20h3v2H7v-2h3v-2.1A5 5 0 016 13v-1.13A4 4 0 013 8V5a2 2 0 012-2zm0 2v3a2 2 0 002 2V5H5zm14 0h-2v5a2 2 0 002-2V5z"/></svg>
+          <span data-i18n="score_title">My Score</span>
+        </div>
+        <div style="display:flex;align-items:baseline;gap:12px">
+          <div id="myScore" style="font-size:46px;font-weight:800;color:var(--gold);line-height:1">—</div>
+          <div id="myRank" style="font-size:13px;color:var(--dim)"></div>
+        </div>
+        <div id="myScoreDetail" style="display:flex;gap:22px;flex-wrap:wrap;margin-top:18px;font-size:13px;color:var(--dim)"></div>
+        <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--line);
+                    font-size:12px;color:var(--dim2);line-height:1.8">
+          <b style="color:var(--dim)" data-i18n="score_rules">Scoring rules</b><span data-i18n="score_rules_note">(all from on-chain actions, verifiable)</span><br>
+          <span data-i18n="score_rule_line">Post +10 · Reply +5 · Reply received +2 · Tip +20 · Tip received +30 · Bind account +50 · Username +50</span>
+        </div>
+      </div>
+
+      <div class="pcard">
+        <div class="ptitle">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M5 3h14a2 2 0 012 2v3a4 4 0 01-3 3.87V13a5 5 0 01-4 4.9V20h3v2H7v-2h3v-2.1A5 5 0 016 13v-1.13A4 4 0 013 8V5a2 2 0 012-2zm0 2v3a2 2 0 002 2V5H5zm14 0h-2v5a2 2 0 002-2V5z"/></svg>
+          <span data-i18n="rail_scoreboard">Leaderboard</span>
+          <span style="font-size:11.5px;font-weight:600;color:var(--dim2)" data-i18n="top20">Top 20</span>
+        </div>
+        <div id="scoreBoardFull" style="margin-top:4px"></div>
+      </div>
+    </div>
+
+    <!-- ========== 成就 ========== -->
+    <div id="view-ach" style="display:none">
+      <div class="pcard">
+        <div class="ptitle">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l2.9 6.3 6.9.7-5.1 4.6 1.4 6.8L12 17l-6.1 3.4 1.4-6.8L2.2 9l6.9-.7L12 2z"/></svg>
+          <span data-i18n="nav_ach">Achievements</span>
+          <span id="achCount" style="font-size:11.5px;font-weight:600;color:var(--dim2)"></span>
+        </div>
+        <div id="achGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));
+                                 gap:11px;margin-top:8px"></div>
+      </div>
+    </div>
+
+    <!-- ========== GitHub 项目 ========== -->
+    <div id="view-repos" style="display:none">
+      <div class="pcard">
+        <div class="ptitle">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z"/></svg>
+          <span data-i18n="nav_repos">GitHub Projects</span>
+          <span style="font-size:11.5px;font-weight:600;color:var(--dim2)" data-i18n="badge_no_fork">forks excluded</span>
+        </div>
+        <div id="repoList"><div style="color:var(--dim);font-size:14px" data-i18n="ph_bind_gh">Bind GitHub to view</div></div>
+      </div>
+    </div>
+  </main>
+
+  <!-- ==================== 右栏 ==================== -->
+  <aside class="rail">
+    <div class="card">
+      <h2>
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>
+        <span data-i18n="rail_chain">On-chain</span>
+      </h2>
+      <div class="row"><div class="l1" data-i18n="rail_network">Network</div><div class="l2" data-i18n="val_mainnet">Arc Mainnet</div>
+        <div class="l1" data-i18n="val_chain">chainId 5042 · gas in USDC</div></div>
+      <div class="row"><div class="l1" data-i18n="rail_indexed">Indexed posts</div>
+        <div class="l2" id="statPosts">—</div>
+        <div class="l1" data-i18n="hint_immutable">Permanent, immutable</div></div>
+      <div class="row"><div class="l1" data-i18n="rail_cost">Post cost</div><div class="l2" data-i18n="val_cost">~$0.0014</div>
+        <div class="l1" data-i18n="val_cost_hint">200 chars · 20 gwei</div></div>
+    </div>
+
+    <div class="card" id="scoreCard">
+      <h2>
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M5 3h14a2 2 0 012 2v3a4 4 0 01-3 3.87V13a5 5 0 01-4 4.9V20h3v2H7v-2h3v-2.1A5 5 0 016 13v-1.13A4 4 0 013 8V5a2 2 0 012-2zm0 2v3a2 2 0 002 2V5H5zm14 0h-2v5a2 2 0 002-2V5z"/></svg>
+        <span data-i18n="rail_scoreboard">Leaderboard</span>
+        <span style="font-size:11.5px;font-weight:600;color:var(--dim2);margin-left:auto" data-i18n="lbl_onchain_cum">from on-chain actions</span>
+      </h2>
+      <div id="scoreBox"><div class="cph" data-i18n="loading">Loading…</div></div>
+    </div>
+
+    <div class="card" id="boardCard">
+      <h2>
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l2.9 6.3 6.9.7-5.1 4.6 1.4 6.8L12 17l-6.1 3.4 1.4-6.8L2.2 9l6.9-.7L12 2z"/></svg>
+        <span data-i18n="rail_tipboard">Tip Leaderboard</span>
+        <span style="font-size:11.5px;font-weight:600;color:var(--dim2);margin-left:auto" data-i18n="lbl_received">USDC received</span>
+      </h2>
+      <div id="boardBox"><div class="cph" data-i18n="loading">Loading…</div></div>
+    </div>
+
+    <div class="card" id="recentCard">
+      <h2>
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M13 3a9 9 0 00-9 9H1l3.9 3.9L8.8 12H6a7 7 0 117 7 6.96 6.96 0 01-4.95-2.05l-1.42 1.42A9 9 0 1013 3zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z"/></svg>
+        <span data-i18n="rail_recent">Latest Tips</span>
+      </h2>
+      <div id="recentBox"><div class="cph" data-i18n="loading">Loading…</div></div>
+    </div>
+
+    <div class="footer">
+      <a href="https://explorer.arc.io/address/0x64fce0fa3f088d746ebcf926532a131514e92368" target="_blank" rel="noopener" data-i18n="rail_contract">Contract ↗</a><br data-i18n="footer_note">Posts permanent on-chain · tips non-custodial</div>
+  </aside>
+</div>
+
+<script type="module" src="./app.js"></script>
+</body>
+</html>

@@ -1,0 +1,18 @@
+# deps
+node_modules/
+
+# secrets — NEVER commit
+.env
+.dev.vars
+
+# wrangler local state
+worker/.wrangler/
+.wrangler/
+
+# deploy records (contain tx hashes / addresses we regenerate)
+build/deploy-*.json
+
+# editor backups
+*.bak
+*.log
+.DS_Store

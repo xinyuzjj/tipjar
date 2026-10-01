@@ -1,0 +1,24 @@
+name = "tipjar-api"
+main = "src/index.js"
+compatibility_date = "2026-09-01"
+
+# KV：索引状态 + 打赏数据缓存
+[[kv_namespaces]]
+binding = "TIPS"
+id = "local_dev_kv"
+
+# Cron：每 2 分钟索引一次新的 Memo 事件
+[triggers]
+crons = ["*/2 * * * *"]
+
+[vars]
+TOPIC_IDENTITY = "0x938e6c81e411768ee3e8abe12e79a0fe6d46324ac7f1246424b5e0cbb644cce9"
+TOPIC_USERNAME = "0x74d8e560d2e870c35b35dc882df2a5c96e2bf1cdb5ef6dd2f9cb433c8d048853"
+TOPIC_TIPPED = "0xb3711fcc2c4da63949744a027358bf14c4596aca9ba0896e7d5f2567546a9684"
+TOPIC_POST = "0x0ceac9e379724712b0e46f5ad9c66e6670926dd78015aedef760ec7f92fc7193"
+CHAIN = "mainnet"
+# 部署 TipJarSocial 后填入（scripts/deploy.mjs 会打印）
+CONTRACT_ADDRESS = "0x005a5a60054e56d082ed0de3ccc6cb72c2a3350e"
+LEGACY_CONTRACT = "0x64fce0fa3f088d746ebcf926532a131514e92368"
+RPC_URL = "https://rpc.mainnet.arc.io"
+LOOKBACK_BLOCKS = "20000"
