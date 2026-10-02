@@ -7,9 +7,11 @@ compatibility_date = "2026-09-01"
 binding = "TIPS"
 id = "6110f715f2914c80b85621a0117bd30a"
 
-# Cron：每 2 分钟索引一次新的 Memo 事件
+# Cron：索引新的链上事件。
+# 别调太密：KV 免费版每天只有 1000 次写，而每次索引至少写 2 个 key，
+# 每 2 分钟一轮（720 轮/天）会直接打爆额度。10 分钟一轮 = 144 轮/天，留足余量。
 [triggers]
-crons = ["*/2 * * * *"]
+crons = ["*/10 * * * *"]
 
 [vars]
 TOPIC_IDENTITY = "0x938e6c81e411768ee3e8abe12e79a0fe6d46324ac7f1246424b5e0cbb644cce9"

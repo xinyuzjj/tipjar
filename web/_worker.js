@@ -21,6 +21,10 @@ export default {
     if (url.pathname.startsWith('/api/')) {
       const headers = new Headers(request.headers);
       headers.delete('host');
+      // 把用户实际访问的 origin 透传给上游：
+      // Worker 看到的 request.url 是它自己的 workers.dev 域名，
+      // 不加这个头的话 OAuth 回跳会把用户带到 workers.dev（而那个域名在很多网络下被 DNS 污染）。
+      headers.set('x-forwarded-origin', url.origin);
 
       const init = { method: request.method, headers, redirect: 'manual' };
       if (request.method !== 'GET' && request.method !== 'HEAD') {

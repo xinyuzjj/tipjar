@@ -84,6 +84,7 @@ const I18N = {
     checkin_streak_days:'day streak', checkin_days_total:'days total',
     gh_not_bound:'GitHub not bound yet — go to Profile → Identity to bind it',
     repo_loading:'Loading…', repo_none:'No original repos', repo_failed:'Failed: ',
+    repo_share:'Post to home', repo_sharing:'Posting…', repo_shared:'Posted to home ✓',
     repo_filtered:'auto-filtered forks', repo_updated:'Updated',
     tips_count:'tips', reply_count:'replies', post_count:'posts', tips_unit:'tips',
     post_unit:'posts',
@@ -170,7 +171,8 @@ const I18N = {
     checkin_need_wallet:'连接钱包后签到',
     checkin_streak_days:'天连续', checkin_days_total:'天累计',
     gh_not_bound:'还没有绑定 GitHub —— 去「个人资料 → 身份」绑定后显示',
-    repo_loading:'拉取中…', repo_none:'没有原创项目', repo_failed:'拉取失败：',
+    repo_loading:'加载中…', repo_none:'没有原创仓库', repo_failed:'失败：',
+    repo_share:'发到首页', repo_sharing:'发布中…', repo_shared:'已发到首页 ✓',
     repo_filtered:'已自动过滤 fork 仓库', repo_updated:'更新',
     tips_count:'笔打赏', reply_count:'回复', post_count:'帖', tips_unit:'笔打赏',
     post_unit:'条',
@@ -222,6 +224,14 @@ document.querySelectorAll('.langsw button').forEach((b) =>
 
 // ---------------------------------------------------------------- 配置
 const CONTRACT = '0x005a5a60054e56d082ed0de3ccc6cb72c2a3350e';
+// 换合约前的旧合约，历史帖子仍在它上面（索引器把它的帖子 id 加了 1000000 偏移，
+// 因为两个合约的 postCount 各自从 0 开始，不加偏移会撞号）。
+const LEGACY_CONTRACT = '0x64fce0fa3f088d746ebcf926532a131514e92368';
+const LEGACY_OFFSET = 1000000;
+// 帖子 id → 实际该调用的合约地址和原始 id
+const routePost = (id) => id >= LEGACY_OFFSET
+  ? { address: LEGACY_CONTRACT, rawId: id - LEGACY_OFFSET }
+  : { address: CONTRACT, rawId: id };
 const ARC_CHAIN_ID = 5042;
 const MIN_GWEI = 20n;
 
@@ -515,9 +525,10 @@ async function sendReply(postId) {
     if (!walletClient) await connect();
     btn.disabled = true;
     btn.textContent = t('signing');
+    const route = routePost(postId);   // 旧合约的帖子要在旧合约上回复
     const hash = await walletClient.writeContract({
-      address: CONTRACT, abi: ABI, functionName: 'reply',
-      args: [BigInt(postId), content],
+      address: route.address, abi: ABI, functionName: 'reply',
+      args: [BigInt(route.rawId), content],
       maxFeePerGas: await fee(),
     });
     btn.textContent = t('onchain');
@@ -852,6 +863,10 @@ document.addEventListener('click', async (e) => {
   const csend = e.target.closest('[data-csend]');
   if (csend) { e.stopPropagation(); await sendReply(Number(csend.dataset.csend)); return; }
 
+  // GitHub 项目：发到首页
+  const shr = e.target.closest('[data-share]');
+  if (shr) { e.stopPropagation(); await shareRepo(shr.dataset.share); return; }
+
   const el = e.target.closest('[data-tip]');
   if (!el) return;
   e.stopPropagation();
@@ -862,9 +877,10 @@ document.addEventListener('click', async (e) => {
   try {
     if (!walletClient) await connect();
     el.classList.add('done');
+    const route = routePost(postId);   // 旧合约的帖子要调旧合约
     const hash = await walletClient.writeContract({
-      address: CONTRACT, abi: ABI, functionName: 'tipPost',
-      args: [BigInt(postId), note],
+      address: route.address, abi: ABI, functionName: 'tipPost',
+      args: [BigInt(route.rawId), note],
       value: parseUnits(amt, 18),
       maxFeePerGas: await fee(),
     });
@@ -905,7 +921,11 @@ document.querySelectorAll('.oauthbtn').forEach((b) =>
         `${t('oauth_go')}${OAUTH_WHERE[provider] || provider}${t('oauth_fill')}`
       );
     }
-    const redirect = `${API_BASE || location.origin}/api/oauth/${provider}/callback?return=${encodeURIComponent(location.href)}`;
+    // redirect_uri 必须是干净的、不带 query 的地址：
+    // GitHub 要求它和 OAuth App 里注册的 callback URL 精确匹配，
+    // 多一个 ?return=... 就会报 "redirect_uri is not associated with this application"。
+    // 回跳目标由后端从 callback 自己的 origin 推导。
+    const redirect = `${API_BASE || location.origin}/api/oauth/${provider}/callback`;
 
     if (provider === 'github') {
       location.href = `https://github.com/login/oauth/authorize?client_id=${cfg.github}` +
@@ -1139,32 +1159,68 @@ $('#identityToggle')?.addEventListener('click', async () => {
 });
 
 // ---------------------------------------------------------------- GitHub 项目
+// 走自家后端代理（/api/repos/:username），不直连 api.github.com：
+// 未认证的 GitHub API 只有 60 次/小时（按 IP），浏览器直连很容易 403。
+let REPOS = {};   // 当前加载的仓库，data-share 按钮从这里取详情
 async function loadRepos(username) {
   const box = $('#repoList');
   box.innerHTML = `<div style="color:var(--dim);font-size:14px">${t('repo_loading')}</div>`;
   try {
-    const r = await fetch(`https://api.github.com/users/${encodeURIComponent(username)}/repos?per_page=100&sort=updated`);
-    if (!r.ok) throw new Error('GitHub API ' + r.status);
-    const all = await r.json();
-    const own = all.filter((x) => !x.fork);       // ← 排除 fork
-    const forked = all.length - own.length;
+    const r = await fetch(`${API_BASE}/api/repos/${encodeURIComponent(username)}`);
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    const own = d.items || [];
+    const forked = d.forks || 0;
+    REPOS = Object.fromEntries(own.map((x) => [x.name, x]));
     if (!own.length) { box.innerHTML = `<div style="color:var(--dim);font-size:14px">${t('repo_none')}</div>`; return; }
     box.innerHTML = own
-      .sort((a, b) => b.stargazers_count - a.stargazers_count)
+      .sort((a, b) => b.stars - a.stars)
       .slice(0, 12)
       .map((x) => `<div class="repo">
-        <h4><a href="${esc(x.html_url)}" target="_blank" rel="noopener">${esc(x.name)}</a></h4>
+        <h4><a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.name)}</a></h4>
         ${x.description ? `<p>${esc(x.description)}</p>` : ''}
         <div class="meta">
           ${x.language ? `<span>${esc(x.language)}</span>` : ''}
-          <span>★ ${x.stargazers_count}</span>
-          <span>fork ${x.forks_count}</span>
-          <span>${t('repo_updated')} ${(x.updated_at || '').slice(0, 10)}</span>
+          <span>★ ${x.stars}</span>
+          <span>fork ${x.forks}</span>
+          <span>${t('repo_updated')} ${esc(x.updated || '')}</span>
         </div>
+        <button class="shareRepo" data-share="${esc(x.name)}">${t('repo_share')}</button>
       </div>`).join('')
       + (forked ? `<div style="color:var(--dim2);font-size:12.5px;margin-top:10px">${t('repo_filtered')} ${forked}</div>` : '');
   } catch (e) {
     box.innerHTML = `<div style="color:var(--dim);font-size:14px">${t('repo_failed')}${esc(e.message)}</div>`;
+  }
+}
+
+// 把仓库作为一条帖子发到链上（首页）。
+// 内容就是「仓库名 — 描述 + 链接」，发完跳回首页并重新索引。
+async function shareRepo(name) {
+  const r = REPOS[name];
+  if (!r) return;
+  const btn = document.querySelector(`.shareRepo[data-share="${CSS.escape(name)}"]`);
+  const restore = btn ? btn.textContent : '';
+  try {
+    if (!walletClient) await connect();
+    if (!walletClient) return;
+    if (btn) { btn.disabled = true; btn.textContent = t('repo_sharing'); }
+
+    const content = `${r.name}${r.description ? ' — ' + r.description : ''}\n${r.url}`;
+    const hash = await walletClient.writeContract({
+      address: CONTRACT, abi: ABI, functionName: 'post',
+      args: [content], maxFeePerGas: await fee(),
+    });
+    await publicClient.waitForTransactionReceipt({ hash });
+    refreshBalance();
+    if (btn) btn.textContent = t('repo_shared');
+
+    kickedOnce = false;
+    showView('home');
+    await loadFeed();
+    setTimeout(() => { if (btn) { btn.disabled = false; btn.textContent = restore; } }, 2500);
+  } catch (e) {
+    if (btn) { btn.disabled = false; btn.textContent = restore; }
+    alert(t('post_failed') + (e.shortMessage || e.message || e).slice(0, 80));
   }
 }
 

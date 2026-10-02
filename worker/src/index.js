@@ -52,15 +52,24 @@ function readString(d, offset) {
  * topics: [sig, id, author, parent]
  * data  : [contentOffset(32) | timestamp(32) | content(len+data)]
  */
-export function decodePost(log) {
+// 旧合约的帖子 id 加这个偏移，避免和新合约撞号。
+// 两个合约的 postCount 各自从 0 开始，同时索引时同 id 会互相覆盖。
+const LEGACY_OFFSET = 1000000;
+
+export function decodePost(log, legacy = false) {
   const d = hexToBytes(log.data);
   const dv = new DataView(d.buffer, d.byteOffset, d.byteLength);
   const contentOff = readOffset(d, 0);
   const timestamp = Number(dv.getBigUint64(32 + 24));
+  const rawId = topicToUint(log.topics[1]);
+  const rawParent = topicToUint(log.topics[3]);
   return {
-    id: topicToUint(log.topics[1]),
+    id: legacy ? rawId + LEGACY_OFFSET : rawId,
+    rawId,
+    legacy,
     author: topicToAddress(log.topics[2]),
-    parent: topicToUint(log.topics[3]),
+    parent: legacy ? (rawParent ? rawParent + LEGACY_OFFSET : 0) : rawParent,
+    rawParent,
     content: readString(d, contentOff),
     timestamp,
     txHash: log.transactionHash,
@@ -130,7 +139,7 @@ async function rpc(env, method, params) {
 }
 
 /** 带退避重试的 RPC：Arc 的公共 RPC 会限流，尤其从 Cloudflare 网络出口 */
-async function rpcRetry(env, method, params, attempts = 4) {
+async function rpcRetry(env, method, params, attempts = 5) {
   let lastErr;
   for (let i = 0; i < attempts; i++) {
     try {
@@ -140,18 +149,30 @@ async function rpcRetry(env, method, params, attempts = 4) {
       const msg = String(e.message || e);
       const throttled = /rate limit|too many|429|timeout/i.test(msg);
       if (!throttled || i === attempts - 1) throw e;
-      await new Promise((r) => setTimeout(r, 800 * (i + 1)));  // 0.8s, 1.6s, 2.4s
+      // 指数退避：限流恢复通常要几十秒，线性退避（0.8/1.6/2.4s）根本等不到恢复
+      await new Promise((r) => setTimeout(r, 1000 * Math.pow(2, i)));  // 1s, 2s, 4s, 8s
     }
   }
   throw lastErr;
 }
 const hexBlock = (n) => '0x' + Number(n).toString(16);
 
+/** 只在值真的变了才写。
+ *  KV 免费版每天只有 1000 次写，而 Cron 一天要跑上百轮；
+ *  无条件写入（哪怕内容一模一样）会瞬间打爆额度、触发每日警报。 */
+async function putIfChanged(env, key, value) {
+  const next = JSON.stringify(value);
+  const prev = await env.TIPS.get(key, 'json');
+  if (JSON.stringify(prev) === next) return false;
+  await env.TIPS.put(key, next);
+  return true;
+}
+
 // ---------- 索引 ----------
 const MAX_FEED = 500;
 const MAX_USER_POSTS = 200;
 
-export async function indexOnce(env, { force = false } = {}) {
+export async function indexOnce(env, { force = false, fromBlock = null, toBlock = null } = {}) {
   const contract = (env.CONTRACT_ADDRESS || '').toLowerCase();
   if (!contract) throw new Error('CONTRACT_ADDRESS 未配置');
 
@@ -160,18 +181,38 @@ export async function indexOnce(env, { force = false } = {}) {
   const addresses = legacy && legacy !== contract ? [contract, legacy] : contract;
 
   const latest = Number(hexToBigInt(await rpcRetry(env, 'eth_blockNumber', [])));
+  // force 重扫用更大的窗口：手动触发通常就是为了找回历史帖子（例如换合约前的旧帖），
+  // 而增量索引的窗口（20000）往往已经覆盖不到。
   const lookback = Number(env.LOOKBACK_BLOCKS || 20000);
+  const win = force ? Math.max(lookback, Number(env.FORCE_LOOKBACK_BLOCKS || 60000)) : lookback;
 
   const cursor = force ? null : await env.TIPS.get('cursor', 'json');
-  const from = cursor ? cursor + 1 : latest - lookback;
-  if (from > latest) return { scanned: 0, posts: 0, tips: 0, latest, from };
+  // force 重扫也要能分轮推进：单独记一个 force_cursor，
+  // 否则每轮都从 latest-lookback 重来，永远在扫同一段开头，后面的历史永远扫不到。
+  const fc = force ? await env.TIPS.get('force_cursor', 'json') : null;
+  const explicit = fromBlock !== null;   // 显式指定范围：一次性考古，不参与进度推进
+  let from;
+  if (explicit) from = fromBlock;
+  else if (force) from = fc ? fc + 1 : latest - win;
+  else from = cursor ? cursor + 1 : latest - win;
+  if (from > latest) {
+    if (force) await env.TIPS.delete('force_cursor');
+    return { scanned: 0, posts: 0, tips: 0, latest, from, caughtUp: true };
+  }
 
   // 分段扫描：RPC 对单次 getLogs 的区块跨度有上限，连续请求还会限流
-  const CHUNK = Number(env.CHUNK_BLOCKS || 5000);
+  const CHUNK = Number(env.CHUNK_BLOCKS || 2000);
+  // 单次最多扫这么多块。Arc RPC 从 Cloudflare 出口很容易限流，
+  // 一次贪多会整段失败 → cursor 不推进 → 窗口越积越大 → 永远追不上。
+  // 限制上限后每轮都能推进一点，多跑几轮自然追上。
+  const MAX_SCAN = Number(env.MAX_SCAN_BLOCKS || 3000);
+  const scanTo = toBlock !== null
+    ? Math.min(toBlock, latest)
+    : Math.min(latest, from + MAX_SCAN - 1);
   const logs = [];
   let seg = 0;
-  for (let f = from; f <= latest; f += CHUNK) {
-    const t = Math.min(f + CHUNK - 1, latest);
+  for (let f = from; f <= scanTo; f += CHUNK) {
+    const t = Math.min(f + CHUNK - 1, scanTo);
     if (seg++ > 0) await new Promise((r) => setTimeout(r, 500)); // 避开 rate limit
     const part = await rpcRetry(env, 'eth_getLogs', [
       {
@@ -192,7 +233,8 @@ export async function indexOnce(env, { force = false } = {}) {
   for (const log of logs) {
     try {
       const t0 = log.topics[0];
-      if (t0 === TOPICS.Post) posts.push(decodePost(log));
+      const isLegacy = !!legacy && log.address.toLowerCase() === legacy;
+      if (t0 === TOPICS.Post) posts.push(decodePost(log, isLegacy));
       else if (t0 === TOPICS.Tipped) tips.push(decodeTipped(log));
       else if (t0 === TOPICS.IdentityBound) binds.push(decodeIdentity(log));
       else if (t0 === TOPICS.UsernameSet) names.push(decodeUsername(log));
@@ -202,13 +244,27 @@ export async function indexOnce(env, { force = false } = {}) {
   }
 
   if (posts.length) {
-    const prev = (await env.TIPS.get('feed', 'json')) || [];
-    // 去重：force 重扫时同一条帖子会被抓到多次
-    const seen = new Set();
-    const merged = [...posts, ...prev]
-      .filter((x) => (seen.has(x.id) ? false : (seen.add(x.id), true)))
-      .sort((a, b) => b.id - a.id)
-      .slice(0, MAX_FEED);
+    // 真相源是 post:<id>（按 id 唯一、写入幂等），feed 只是派生缓存。
+    // 为什么不能对 feed 直接做「读-改-写」：Cloudflare KV 是最终一致的，
+    // Cron 与手动索引并发时会双双读到旧值，后写的覆盖先写的 → 帖子凭空消失。
+    // 这里改成：先把本轮的帖子逐条落盘，再按 id 列表从 post:<id> 重建 feed。
+    for (const p of posts) await env.TIPS.put(`post:${p.id}`, JSON.stringify(p));
+
+    // id 列表只增不减（超出上限才截断），保证历史帖子不会因为某一轮没扫到而丢失
+    const idList = (await env.TIPS.get('post_ids', 'json')) || [];
+    const known = new Set(idList);
+    for (const p of posts) if (!known.has(p.id)) { known.add(p.id); idList.push(p.id); }
+    idList.sort((a, b) => b - a);
+    const kept = idList.slice(0, MAX_FEED);
+    await env.TIPS.put('post_ids', JSON.stringify(kept));
+
+    // 从 post:<id> 重建 feed
+    const rebuilt = [];
+    for (const id of kept) {
+      const p = await env.TIPS.get(`post:${id}`, 'json');
+      if (p) rebuilt.push(p);
+    }
+    const merged = rebuilt;
     await env.TIPS.put('feed', JSON.stringify(merged));
 
     const byAuthor = {};
@@ -281,7 +337,15 @@ export async function indexOnce(env, { force = false } = {}) {
     await env.TIPS.put('identities', JSON.stringify(prev));
   }
 
-  await env.TIPS.put('cursor', JSON.stringify(latest));
+  // cursor 推进到本轮实际扫完的位置（不是链头）：限流导致中途失败时，
+  // 下一轮从上次成功的地方接着扫，而不是把窗口越拉越大。
+  // 显式范围（考古）不动 cursor，免得打乱增量索引的进度。
+  if (!explicit) await putIfChanged(env, 'cursor', scanTo);
+  // force 重扫：记独立进度，扫到链头就清掉标记
+  if (force && !explicit) {
+    if (scanTo >= latest) await env.TIPS.delete('force_cursor');
+    else await env.TIPS.put('force_cursor', JSON.stringify(scanTo));
+  }
   await env.TIPS.put('last_indexed_at', JSON.stringify(Date.now()));
 
   // ---------------------------------------------------------------- 积分
@@ -459,13 +523,14 @@ export async function indexOnce(env, { force = false } = {}) {
     .map((a, i) => ({ ...a, rank: i + 1, amountIn: Number(a.amountIn.toFixed(6)),
                       amountOut: Number(a.amountOut.toFixed(6)) }));
 
-  await env.TIPS.put('scores', JSON.stringify(scores));
-  await env.TIPS.put('achievements', JSON.stringify(earned));
-  await env.TIPS.put('ach_defs', JSON.stringify(ACHIEVEMENTS));
-  await env.TIPS.put('checkins', JSON.stringify(checkinInfo));
+  await putIfChanged(env, 'scores', scores);
+  await putIfChanged(env, 'achievements', earned);
+  await putIfChanged(env, 'ach_defs', ACHIEVEMENTS);
+  await putIfChanged(env, 'checkins', checkinInfo);
 
-  return { scanned: latest - from + 1, posts: posts.length, tips: tips.length,
-           binds: binds.length, names: names.length, scored: scores.length, latest, from };
+  return { scanned: scanTo - from + 1, posts: posts.length, tips: tips.length,
+           binds: binds.length, names: names.length, scored: scores.length,
+           from, scanTo, latest, caughtUp: scanTo >= latest };
 }
 
 // ---------- HTTP ----------
@@ -480,7 +545,7 @@ const json = (data, status = 200) =>
     headers: { 'content-type': 'application/json; charset=utf-8', ...CORS },
   });
 
-async function handle(env, url) {
+async function handle(env, url, request) {
   const p = url.pathname;
 
   if (p === '/api/health')
@@ -546,6 +611,64 @@ async function handle(env, url) {
     return json({ ...me, base: 15, streakBonus: 5, streakCap: 10 });
   }
 
+  // GitHub 仓库列表：后端代理 + KV 缓存。
+  // 为什么不从前端直接调 api.github.com：
+  //   未认证的 GitHub API 只有 60 次/小时（按 IP），浏览器直连很容易撞 403；
+  //   而且 GitHub 要求请求带 User-Agent，某些环境下会被拦。
+  // 这里统一走 Worker，带 UA（可选带 token），结果缓存 30 分钟。
+  if (p.startsWith('/api/repos/')) {
+    const user = decodeURIComponent(p.slice('/api/repos/'.length)).trim();
+    if (!user) return json({ error: 'missing username' }, 400);
+
+    const ck = 'repos:' + user.toLowerCase();
+    const cached = await env.TIPS.get(ck, 'json');
+    if (cached && Date.now() - cached.at < 30 * 60 * 1000) {
+      return json({ ...cached.data, cached: true });
+    }
+
+    try {
+      const headers = {
+        'user-agent': 'tipjar-on-arc',
+        'accept': 'application/vnd.github+json',
+      };
+      // 配了 token 就用（额度 5000/小时）；没配也能跑，只是额度低
+      if (env.GITHUB_TOKEN) headers.authorization = `Bearer ${env.GITHUB_TOKEN}`;
+
+      const r = await fetch(
+        `https://api.github.com/users/${encodeURIComponent(user)}/repos?per_page=100&sort=updated`,
+        { headers }
+      );
+      if (!r.ok) {
+        const msg = r.status === 403
+          ? 'GitHub API rate limit (unauthenticated: 60/hour per IP)'
+          : `GitHub API ${r.status}`;
+        // 有旧缓存就先用着，别让页面直接空掉
+        if (cached) return json({ ...cached.data, cached: true, stale: true });
+        return json({ error: msg, status: r.status }, 200);
+      }
+      const all = await r.json();
+      const own = all.filter((x) => !x.fork);
+      const data = {
+        username: user,
+        total: all.length,
+        forks: all.length - own.length,
+        items: own.map((x) => ({
+          name: x.name,
+          url: x.html_url,
+          description: x.description,
+          language: x.language,
+          stars: x.stargazers_count,
+          forks: x.forks_count,
+          updated: (x.updated_at || '').slice(0, 10),
+        })),
+      };
+      await env.TIPS.put(ck, JSON.stringify({ at: Date.now(), data }));
+      return json(data);
+    } catch (e) {
+      if (cached) return json({ ...cached.data, cached: true, stale: true });
+      return json({ error: String(e.message || e) }, 200);
+    }
+  }
   // 单个地址的积分 + 成就
   if (p.startsWith('/api/score/')) {
     const addr = decodeURIComponent(p.slice('/api/score/'.length)).toLowerCase();
@@ -583,7 +706,11 @@ async function handle(env, url) {
   if (p.startsWith('/api/oauth/') && p.endsWith('/callback')) {
     const provider = p.slice('/api/oauth/'.length, -'/callback'.length);
     const code = url.searchParams.get('code');
-    const ret = url.searchParams.get('return') || '/';
+    // 回跳目标：优先用显式 return，其次用代理透传的原始 origin，最后才用 Worker 自己的 origin。
+    // 注意：这个 Worker 通常跑在 pages.dev 的同域代理后面，
+    // 直接读 url.origin 会拿到 workers.dev 域名（部分网络下被 DNS 污染），所以必须先看 x-forwarded-origin。
+    const ret = url.searchParams.get('return')
+      || (request.headers.get('x-forwarded-origin') ? request.headers.get('x-forwarded-origin') + '/' : url.origin + '/');
     if (!code) return new Response('缺少 code', { status: 400 });
 
     let username = '';
@@ -637,7 +764,19 @@ async function handle(env, url) {
   }
 
   if (p === '/api/index') {
-    const r = await indexOnce(env, { force: url.searchParams.get('force') === '1' });
+    // ?reset=1 清掉重扫进度，从窗口起点重新来（改了回看窗口后必须重置）
+    if (url.searchParams.get('reset') === '1') {
+      await env.TIPS.delete('force_cursor');
+    }
+    // ?from=<block>&to=<block> 直接指定范围：找回很久以前的帖子时，
+    // 比把整个回看窗口拉大高效得多（也少撞 RPC 限流）
+    const qFrom = url.searchParams.get('from');
+    const qTo = url.searchParams.get('to');
+    const r = await indexOnce(env, {
+      force: url.searchParams.get('force') === '1',
+      fromBlock: qFrom ? Number(qFrom) : null,
+      toBlock: qTo ? Number(qTo) : null,
+    });
     return json(r);
   }
 
@@ -658,7 +797,7 @@ export default {
     if (url.pathname.startsWith('/api/')) {
       try {
         loadTopics(env);
-        return await handle(env, url);
+        return await handle(env, url, request);
       } catch (e) {
         return json({ error: String(e.message || e) }, 500);
       }
